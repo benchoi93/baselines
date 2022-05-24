@@ -7,7 +7,7 @@ from .vec_env import VecEnv, CloudpickleWrapper, clear_mpi_env_vars
 def worker(remote, parent_remote, env_fn_wrappers):
     def step_env(env, action):
         ob, reward, done, info = env.step(action)
-        if done:
+        if all(done):
             ob = env.reset()
         return ob, reward, done, info
 
@@ -27,6 +27,12 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 break
             elif cmd == 'get_spaces_spec':
                 remote.send(CloudpickleWrapper((envs[0].observation_space, envs[0].action_space, envs[0].spec)))
+            elif cmd == "get_env":
+                remote.send([env for env in envs])
+            elif cmd == "render_noout":
+                remote.send([env.render(display=False) for env in envs])
+            elif cmd == "render_out":
+                remote.send([env.render(display=True, save=True)  for env in envs])
             else:
                 raise NotImplementedError
     except KeyboardInterrupt:
@@ -94,6 +100,30 @@ class SubprocVecEnv(VecEnv):
         obs = [remote.recv() for remote in self.remotes]
         obs = _flatten_list(obs)
         return _flatten_obs(obs)
+
+    def get_envs(self):
+        self._assert_not_closed()
+        for remote in self.remotes:
+            remote.send(('get_env', None))
+        envs = [remote.recv() for remote in self.remotes]
+        return envs
+
+
+    def render(self, display=False, save=False):
+        self._assert_not_closed()
+        if not display:
+            for remote in self.remotes:
+                remote.send(('render_noout', None))
+            outs = [remote.recv() for remote in self.remotes]
+            return outs
+        else:
+            if save:
+                for remote in self.remotes:
+                    remote.send(('render_out', None))
+                figs = [remote.recv() for remote in self.remotes]
+                return figs
+
+
 
     def close_extras(self):
         self.closed = True
